@@ -171,4 +171,20 @@ void ProcessPool<T>::StartChildProcess(){
 template<class T>
 void ProcessPool<T>::StartMainProcess(){
 	SetupSigPipe();
+	//父进程监听Listenfd
+	Addfd(m_epollfd,m_listenfd);
+
+	//使用epoll事件
+	epoll_event events[MAX_EVENT_NUMBER];
+	int sub_process_counter = 0;
+	int new_conn = 1;
+	//用于epoll_wait返回
+	int number = 0;
+	//函数返回值
+	int ret = -1;
+
+	//事件循环
+	while(!m_stop){
+		
+	}
 }
