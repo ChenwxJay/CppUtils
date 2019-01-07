@@ -185,6 +185,76 @@ void ProcessPool<T>::StartMainProcess(){
 
 	//事件循环
 	while(!m_stop){
-		
+		//设置永远等待，不使用超时机制
+		number = epoll_wait(m_epollfd,events,MAX_EVENT_NUMBER,-1);
+		if(number < 0 || errno != EINTR){
+			printf("epoll failed!\n");
+			break;
+		}
+		for(int i = 0;i < number;i++){
+			int sockfd = events[i].data.fd;//获取就绪事件的描述符
+			if((sockfd == m_listenfd) && (events[i].events & EPOLLIN))
+			{   
+				//客户端有连接到来
+                int cur_pos = sub_process_counter;//获取当前计数器位置
+                //使用轮询方法将新连接分配给子进程处理
+                do{
+                	if(m_sub_process[cur_pos].m_pid != -1){
+                		break;//找到一个正在运行的进程，退出轮询
+                	}
+                	cur_pos = (cur_pos+1)%m_process_number;//轮询，注意取余数
+                }
+                while(cur_pos != sub_process_counter);//如果轮询一圈都没有找到则退出
+                //判断是否找到
+                if(m_sub_process[cur_pos].m_pid == -1){
+                    //没有找到合适的进程接收新连接
+                    m_stop = true;
+                    break;
+                }
+                //计算下一个可用的进程并存储到变量中
+                sub_process_counter = (i + 1)%m_process_number;//注意取余数
+                //向查询到的进程发送信息
+                send(m_sub_process[i].m_pipefd[0],(char*)&new_conn,sizeof(new_conn),0);
+                //打印日志
+                fprintf(stdout, "Send the request to the child progress!\n");
+			}
+			else if((sockfd == sig_pipefd[0]) && (events[i].events & EPOLLIN)){
+                itn sig;
+                char signals[128];
+                //从管道接收信号值，使用recv函数
+                ret = recv(sig_pipefd[0],signals,sizeof(signals),0);
+                if(ret <= 0){
+                	//没有接收到数据或者接收出错
+                	continue;
+                }
+                else{
+                  //循环遍历每一个位置
+                  switch(signals[i])
+                  {
+                  	case SIGCHLD:
+                  	{
+                  		pid_t pid;//局部变量，用来存储进程PID
+                  		int stat;
+
+                  		//循环等待所有子进程退出
+                  		while((pid = waitpid(-1,&stat,WNOHANG)) > 0){
+                  			//父进程需要处理子进程关闭之后的资源回收
+                  			for(int i = 0;i < m_process_number;i++){
+                  				if(m_sub_process[i].m_pid == pid){
+                  					//正好匹配到某个子进程结束
+                  					printf("child process:%d join\n",i);
+                  					//关闭通信管道
+                  					close(m_sub_process[i].m_pipefd[0]);
+                  					//将该进程的PID置为-1，表示该进程已经停止
+                  					m_sub_process[i].m_pid = -1;
+                  				}
+                  			}
+                  		}
+                  		//所有
+                  	}
+                  }	
+                }
+			}
+		}
 	}
 }
