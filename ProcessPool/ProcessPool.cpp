@@ -1,19 +1,44 @@
 #include "ProcessPool.h"
 
-#define MAX_EVENT_NUMBER 64
+//#define MAX_EVENT_NUMBER 64
+template<typename T>
+ProcessPool<T*> ProcessPool<T>::m_instance = nullptr;
 
-template<class T>
-class ProcessPool{
-public:
-	void StartMainProcess();
-    
-}
+//用于处理信号的管道，用于实现统一事件源
+static int sig_pipefd[2];
+
 //设置非阻塞描述符
-int SetNonBlocking(int fd){
+static int SetNonBlocking(int fd){
    int old_options = fcntl(fd,F_GETFL);
    int new_options = old_options |  O_NONBLOCK;
    fcntl(fd,F_SETFL,new_options);
    return old_options;//返回原来的描述符属性
+}
+static void Addfd(int epollfd,int fd){
+    epoll_event event;
+    event.data.fd = fd;
+    event.events = EPOLLIN | EPOLL_ET;
+    //向epoll内核事件表注册
+    epoll_ctl(epollfd,EPOLL_CTL_ADD,fd,&event);
+}
+//进程池类构造函数，私有，实现单例模式
+template<typename T>
+inline ProcessPool<T>::ProcessPool(int listen_fd,int process_number = 8);
+
+//创建进程池
+template<typename T>
+static ProcessPool<T>* ProcessPool<T>::create(int listen_fd,int process_number = 8){
+    std::unique_lock<mutex> lock(mux);
+    if(!m_instance){
+       m_instance = new ProcessPool<T>(Listen_fd,process_number);//创建进程池对象，返回指针
+    }
+    return m_instance;
+}
+
+//析构函数定义，需要析构子进程管理数组
+template<typename T>
+inline ProcessPool<T>::~ProcessPool(){
+   delete [] m_sub_process;
 }
 
 template<typename T>
@@ -40,6 +65,8 @@ void ProcessPool<T>::SetupSigPipe(){
 	AddSigHandler(SIGPIPE,sig_handler);
 	AddSigHandler(SIGINT,sig_handler);
 }
+
+//启动进程池
 template<typename T>
 void ProcessPool<T>::run(){
 	if(owner != -1){
@@ -50,6 +77,7 @@ void ProcessPool<T>::run(){
 	//主进程的owner的标志为-1，执行主进程流程
 	StartMainProcess();
 }
+
 template<typename T>
 void ProcessPool<T>::StartChildProcess(){
 	//子进程通过自身在进程池中的编号找到与父进程通信的管道
@@ -169,7 +197,8 @@ void ProcessPool<T>::StartChildProcess(){
 }
 //启动主进程，使用模板类的函数
 template<class T>
-void ProcessPool<T>::StartMainProcess(){
+void ProcessPool<T>::StartMainProcess()
+{
 	SetupSigPipe();
 	//父进程监听Listenfd
 	Addfd(m_epollfd,m_listenfd);
@@ -184,14 +213,16 @@ void ProcessPool<T>::StartMainProcess(){
 	int ret = -1;
 
 	//事件循环
-	while(!m_stop){
+	while(!m_stop)
+	{
 		//设置永远等待，不使用超时机制
 		number = epoll_wait(m_epollfd,events,MAX_EVENT_NUMBER,-1);
 		if(number < 0 || errno != EINTR){
 			printf("epoll failed!\n");
 			break;
 		}
-		for(int i = 0;i < number;i++){
+		for(int i = 0;i < number;i++)
+		{
 			int sockfd = events[i].data.fd;//获取就绪事件的描述符
 			if((sockfd == m_listenfd) && (events[i].events & EPOLLIN))
 			{   
@@ -218,7 +249,8 @@ void ProcessPool<T>::StartMainProcess(){
                 //打印日志
                 fprintf(stdout, "Send the request to the child progress!\n");
 			}
-			else if((sockfd == sig_pipefd[0]) && (events[i].events & EPOLLIN)){
+			else if((sockfd == sig_pipefd[0]) && (events[i].events & EPOLLIN))
+			{
                 itn sig;
                 char signals[128];
                 //从管道接收信号值，使用recv函数
@@ -227,7 +259,8 @@ void ProcessPool<T>::StartMainProcess(){
                 	//没有接收到数据或者接收出错
                 	continue;
                 }
-                else{
+                else
+                {
                   //循环遍历每一个位置
                   switch(signals[i])
                   {
@@ -250,11 +283,39 @@ void ProcessPool<T>::StartMainProcess(){
                   				}
                   			}
                   		}
-                  		//所有
+                  		//所有子进程都退出，此时父进程可以退出
+                  		m_stop = true;
+                  		//再次检验是否全部子进程都已经退出，不是则父进程还不能退出
+                  		for(int i = 0;i < m_process_number;i++){
+                  			if(m_sub_process[i].m_pid != -1){
+                  				m_stop = false;
+                  			}
+                  		}
+                  		break;
+                  	}
+                  	case SIGTERM:
+                  	case SIGINT: //父进程收到终止信号，杀死所有子进程
+                  	{
+                       printf("Kill all the child process!\n");
+                       for(int i = 0;i < m_process_number;i++){
+                       	  if(m_sub_process[i].m_pid != -1){
+                       	  	    //直接在程序中使用kill函数
+                  		        kill(pid,SIGTERM);
+                  			}
+                       }
+                  	}
+                  	default:
+                  	{   //收到无法解析的信息，直接跳出switch
+                  		break;
                   	}
                   }	
                 }
 			}
+			else
+			{  //就绪事件无法匹配，直接跳过
+               continue; 
+			}
 		}
 	}
+	close(m_epollfd);//关闭epoll描述符
 }
