@@ -1,11 +1,21 @@
 #include "ProcessPool.h"
 
+
 //#define MAX_EVENT_NUMBER 64
 template<typename T>
 ProcessPool<T*> ProcessPool<T>::m_instance = nullptr;
 
 //用于处理信号的管道，用于实现统一事件源
 static int sig_pipefd[2];
+//定义信号处理函数
+//sig为信号值
+static void sig_handler(int sig){
+    int save_errno = errno;
+    int sig_ = sig;
+    //发送信号给子进程，发送内容是信号值
+    send(sig_pipefd[1],(char*)&sig_,1,0);
+    errno = save_errno;
+}
 
 //设置非阻塞描述符
 static int SetNonBlocking(int fd){
@@ -20,10 +30,54 @@ static void Addfd(int epollfd,int fd){
     event.events = EPOLLIN | EPOLL_ET;
     //向epoll内核事件表注册
     epoll_ctl(epollfd,EPOLL_CTL_ADD,fd,&event);
+    SetNonBlocking(fd);
+}
+static void RemoveFd(int epollfd,int fd){
+    //从epoll内核事件表删除已经注册的fd
+    epoll_ctl(epollfd,EPOLL_CTL_DEL,fd,0);
+
 }
 //进程池类构造函数，私有，实现单例模式
 template<typename T>
 inline ProcessPool<T>::ProcessPool(int listen_fd,int process_number = 8);
+
+/* 
+    进程池构造函数，用于创建进程池中的各个进程，process_number决定创建的进程数
+    listen_fd:监听套接字描述符，在创建进程池之前必须先创建好
+    process_number: 指定进程池中的进程数量
+*/
+template<typename T>
+inline ProcessPool<T>::ProcessPool(int listen_fd,int process_number = 8)
+                   :m_listenfd(listen_fd),m_process_number(process_number),
+                   m_idx(-1),m_stop(false)
+{
+  assert((m_process_number > 0) && (m_process_number <= MAX_PROCESS_NUMBER));
+  //创建进程池数组，用来管理进程
+  m_sub_process = new Process[m_process_number];
+  assert(m_sub_process);
+
+  for(int i = 0;i < m_process_number;i++)
+  {
+      //每个进程都需要创建一个管道
+      int ret = socketpair(PF_UNIX,SOCK_STREAM,0,m_sub_process][i].m_pipefd);
+      assert(ret == 0);
+
+      //创建子进程，并完成一些初始化工作
+      m_sub_process[i].m_pid = fork();
+      assert(m_sub_process[i].m_pid >= 0);
+      if(m_sub_process[i].m_pid > 0 ){
+         //父进程
+         close(m_sub_process[i].m_pipefd[1]);
+         continue;//跳转执行下一个进程的创建
+      }
+      else{
+         //创建好的子进程
+         close(m_sub_process[i].m_pipefd[0]);
+         m_idx = i; //子进程使用写时复制，存储一份m_idx的拷贝
+         break;
+      }
+   }
+}  
 
 //创建进程池
 template<typename T>
@@ -40,7 +94,7 @@ template<typename T>
 inline ProcessPool<T>::~ProcessPool(){
    delete [] m_sub_process;
 }
-
+//统一事件源
 template<typename T>
 void ProcessPool<T>::SetupSigPipe(){
 	//创建epollfd监听描述符
@@ -250,7 +304,7 @@ void ProcessPool<T>::StartMainProcess()
                 fprintf(stdout, "Send the request to the child progress!\n");
 			}
 			else if((sockfd == sig_pipefd[0]) && (events[i].events & EPOLLIN))
-			{
+			{         
                 itn sig;
                 char signals[128];
                 //从管道接收信号值，使用recv函数
