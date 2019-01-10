@@ -1,6 +1,9 @@
 #ifndef PROCESSPOOL_H
 #define PROCESSPOOL_H
 
+#include "Util.h"
+
+
 //进程描述类，封装了目标进程的pid和与其他进程通信使用的管道
 class Process{
 public:
@@ -16,7 +19,7 @@ private:
 template<class T>
 class ProcessPool{
 public:
-	void StartMainProcess();
+	void Run();
 private:
     void SetupSigPipe();
     void StartMainProcess();
