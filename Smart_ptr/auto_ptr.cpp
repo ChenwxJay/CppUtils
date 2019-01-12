@@ -9,6 +9,10 @@ public:
 	{   //构造函数，使用成员初始化列表
 	  	cout << "Construct a object managed by auto_ptr!" << endl;
 	}
+	//拷贝构造函数
+	My_auto_ptr(My_auto_ptr& temp);
+    //赋值运算符重载
+    My_auto_ptr& operator=(My_auto_ptr& temp);
 	~My_auto_ptr(){
         cout << "destroy the object hold by auto_ptr!" << endl;
         //在析构auto_ptr的时候需要调用内部指针的析构函数
@@ -18,6 +22,7 @@ public:
 		//返回内部指针指向的对象
 		return *ptr_;
 	}
+	//重载->运算符，返回内部原生指针
     T* operator->(){
     	//返回内部指针
     	return ptr_;
@@ -28,8 +33,7 @@ public:
 	void reset(T* ptr);
 private:
 	T* ptr_;
-
-}
+};
 //返回auto_ptr内部含有的原生指针，并将内部指针置空
 template<class T>
 T* My_auto_ptr<T>::release(){
@@ -49,7 +53,19 @@ My_auto_ptr& My_auto_ptr<T>::operator=(My_auto_ptr& temp){
 	//最后返回拷贝后的原对象
 	return *this;
 }
+//reset函数，重置内部指针，需要先
 template<typename T>
-My_auto_ptr<T>& reset(){
-	
+My_auto_ptr<T>& My_auto_ptr<T>::reset(T* ptr){
+    if(ptr_ != nullptr)
+    {
+    	delete ptr_;//释放原先管理的资源
+    	ptr_ = ptr;//接收传进来的指针，管理新资源
+    }
+    return *this;
+}
+//拷贝构造函数定义
+template<typename T>
+My_auto_ptr<T>::My_auto_ptr(My_auto_ptr& temp){
+	//拷贝构造函数，需要调用release函数，即
+	ptr_ = temp.release();
 }
