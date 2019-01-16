@@ -42,4 +42,4 @@ private:
     T* ptr;
     //内部含有的function对象，实现自定义删除器
     std::function<void(T*)> deleter;
-}
+};
