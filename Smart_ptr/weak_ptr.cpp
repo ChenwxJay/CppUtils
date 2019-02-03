@@ -2,6 +2,15 @@
 #include <memory>
 using namespace std;
 
+class UseCount{
+public:
+	int s;//shared_ptr引用计数
+	int w;//weak_ptr引用计数
+	UseCount():s(0),w(0){
+        cout << "construct a counter!" << endl;
+	}
+};
+//weak_ptr完整定义
 template<class T>
 class weak_ptr{
 public:
@@ -50,3 +59,10 @@ void weak_ptr<T>::swap(weak_ptr<T>& other){
 	std::swap(ptr,other.ptr);
 	count.swap(other.count);//调用
 }
+
+template<class T>
+void weak_ptr<T>::release(){
+    
+}
+
+template<typename T>
